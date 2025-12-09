@@ -25,18 +25,74 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 # HELPER FUNCTIONS
 # -----------------------------
 def categorize_aqi(aqi):
-    try: 
+    try:
         if aqi is None:
             return None
-        if aqi <= 50: return "Good"
-        if aqi <= 100: return "Moderate"
-        if aqi <= 250: return "Poor"
+        if aqi <= 50:
+            return "Good"
+        if aqi <= 100:
+            return "Moderate"
+        if aqi <= 250:
+            return "Poor"
         return "Hazardous"
     except:
         return None
 
 
+def get_population_density(lat, lon, radius_km=5):
+    """
+    Approximate population density using OpenStreetMap Overpass API.
+    Returns people per km².
+    """
+    # Convert radius to degrees roughly (1 deg ~ 111 km)
+    delta = radius_km / 111
+    bbox = (lat - delta, lon - delta, lat + delta, lon + delta)  # min_lat, min_lon, max_lat, max_lon
+
+    overpass_url = "http://overpass-api.de/api/interpreter"
+    query = f"""
+    [out:json][timeout:25];
+    (
+      node["place"~"city|town"]["population"]({bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]});
+      way["place"~"city|town"]["population"]({bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]});
+      relation["place"~"city|town"]["population"]({bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]});
+    );
+    out center;
+    """
+
+    try:
+        resp = requests.get(overpass_url, params={'data': query}, timeout=15).json()
+        elements = resp.get("elements", [])
+        if not elements:
+            return None
+
+        # Take the largest population in the area as approximation
+        populations = []
+        for el in elements:
+            pop = el.get("tags", {}).get("population")
+            if pop:
+                try:
+                    populations.append(int(pop.replace(',', '')))
+                except:
+                    continue
+
+        if not populations:
+            return None
+
+        pop_max = max(populations)
+        # Approximate area in km² (circle with radius_km)
+        area_km2 = 3.14159 * radius_km**2
+        density = pop_max / area_km2
+        return round(density, 2)
+    except:
+        return None
+
+
+
 def find_closest_industrial_area(lat, lon, radius_km=50):
+    """
+    Uses OpenStreetMap Nominatim search to find the closest industrial area within radius.
+    Returns distance in km.
+    """
     url = (
         "https://nominatim.openstreetmap.org/search?"
         f"q=industrial&format=json&limit=20&"
@@ -45,7 +101,7 @@ def find_closest_industrial_area(lat, lon, radius_km=50):
     )
 
     try:
-        resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}).json()
+        resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10).json()
     except:
         return None
 
@@ -54,13 +110,16 @@ def find_closest_industrial_area(lat, lon, radius_km=50):
 
     min_dist = float("inf")
     for item in resp:
-        ind_lat = float(item["lat"])
-        ind_lon = float(item["lon"])
-        dist = geodesic((lat, lon), (ind_lat, ind_lon)).km
-        if dist < min_dist:
-            min_dist = dist
+        try:
+            ind_lat = float(item["lat"])
+            ind_lon = float(item["lon"])
+            dist = geodesic((lat, lon), (ind_lat, ind_lon)).km
+            if dist < min_dist:
+                min_dist = dist
+        except:
+            continue
 
-    return round(min_dist, 2)
+    return round(min_dist, 2) if min_dist != float("inf") else None
 
 
 def fetch_city_data(city, country):
@@ -68,7 +127,7 @@ def fetch_city_data(city, country):
     print(f"Fetching: {city}, {country}")
 
     try:
-        resp = requests.get(url).json()
+        resp = requests.get(url, timeout=10).json()
     except:
         return None
 
@@ -78,6 +137,10 @@ def fetch_city_data(city, country):
     d = resp["data"]
     iaqi = d.get("iaqi", {})
     lat, lon = d.get("city", {}).get("geo", [None, None])
+
+    # Pull extra fields if coordinates are available
+    population_density = get_population_density(lat, lon) if lat and lon else None
+    proximity_industry = find_closest_industrial_area(lat, lon) if lat and lon else None
 
     return {
         "City": city,
@@ -93,6 +156,8 @@ def fetch_city_data(city, country):
         "CO": iaqi.get("co", {}).get("v"),
         "AQI": d.get("aqi"),
         "Air_Quality_Category": categorize_aqi(d.get("aqi")),
+        "Population_Density": population_density,
+        "Proximity_to_Industrial_Areas": proximity_industry,
         "Timestamp": datetime.now().isoformat()
     }
 
@@ -107,7 +172,7 @@ def fetch_all_latam_stations():
         search_url = f"https://api.waqi.info/search/?token={WAQI_TOKEN}&keyword={country}"
 
         try:
-            resp = requests.get(search_url).json()
+            resp = requests.get(search_url, timeout=10).json()
         except:
             continue
 
@@ -116,19 +181,17 @@ def fetch_all_latam_stations():
 
         for station in resp.get("data", []):
             city = station.get("station", {}).get("name")
-
             if city:
                 row = fetch_city_data(city, country)
                 if row:
                     all_rows.append(row)
-
                 time.sleep(1)  # avoid rate limit
 
     df = pd.DataFrame(all_rows)
 
     # Save file with today's date
     today = datetime.now().strftime("%Y-%m-%d")
-    filename = f"{OUTPUT_DIR}/latam_air_quality_{today}.csv"
+    filename = f"{OUTPUT_DIR}/daily_update_air_quality_{today}.csv"
 
     df.to_csv(filename, index=False)
     print(f"Saved: {filename}")
@@ -139,5 +202,6 @@ def fetch_all_latam_stations():
 # -----------------------------
 # RUN
 # -----------------------------
-df = fetch_all_latam_stations()
-print(df.head())
+if __name__ == "__main__":
+    df = fetch_all_latam_stations()
+    print(df.head())
