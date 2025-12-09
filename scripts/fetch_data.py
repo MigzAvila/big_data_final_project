@@ -9,7 +9,7 @@ import os
 # -----------------------------
 # CONFIG
 # -----------------------------
-WAQI_TOKEN = "your_token"
+WAQI_TOKEN = os.environ["WAQI_TOKEN"]
 CACHE_FILE = "waqi_cache.json"
 LATAM_COUNTRIES = [
     "Mexico", "Belize", "Guatemala", "Honduras", "El Salvador",
