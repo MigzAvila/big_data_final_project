@@ -23,7 +23,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install requests
+          pip install .
 
       - name: Run the Python script
         run: python scripts/fetch_data.py
