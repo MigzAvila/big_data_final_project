@@ -10,9 +10,6 @@ import os
 # CONFIG
 # -----------------------------
 WAQI_TOKEN = os.environ["WAQI_TOKEN"]
-print("Using WAQI Token:", "NAH")
-
-print("Using WAQI Token:", WAQI_TOKEN)
 CACHE_FILE = "waqi_cache.json"
 LATAM_COUNTRIES = [
     "Mexico", "Belize", "Guatemala", "Honduras", "El Salvador",
