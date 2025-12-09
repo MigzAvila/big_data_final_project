@@ -3,14 +3,14 @@ import pandas as pd
 from datetime import datetime
 from geopy.distance import geodesic
 import time
-import json
 import os
 
 # -----------------------------
 # CONFIG
 # -----------------------------
 WAQI_TOKEN = os.environ["WAQI_TOKEN"]
-CACHE_FILE = "waqi_cache.json"
+OUTPUT_DIR = "daily_updates"
+
 LATAM_COUNTRIES = [
     "Mexico", "Belize", "Guatemala", "Honduras", "El Salvador",
     "Nicaragua", "Costa Rica", "Panama", "Cuba",
@@ -18,12 +18,8 @@ LATAM_COUNTRIES = [
     "Paraguay", "Uruguay", "Chile", "Argentina"
 ]
 
-# Load cache
-if os.path.exists(CACHE_FILE):
-    with open(CACHE_FILE, "r") as f:
-        waqi_cache = json.load(f)
-else:
-    waqi_cache = {}
+# Ensure output folder exists
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # -----------------------------
 # HELPER FUNCTIONS
@@ -38,29 +34,9 @@ def categorize_aqi(aqi):
         return "Hazardous"
     except:
         return None
-def get_population_density(lat, lon):
-    key = f"pop_{lat}_{lon}"
-    if key in waqi_cache:
-        return waqi_cache[key]
 
-    url = f"https://api.worldpop.org/v1/services?dataset=pop&year=2020&lon={lon}&lat={lat}"
-    try:
-        resp = requests.get(url).json()
-        density = resp["data"]["pop"]
-    except:
-        density = None
-
-    waqi_cache[key] = density
-    with open(CACHE_FILE, "w") as f:
-        json.dump(waqi_cache, f, indent=2)
-
-    return density
 
 def find_closest_industrial_area(lat, lon, radius_km=50):
-    key = f"industry_{lat}_{lon}"
-    if key in waqi_cache:
-        return waqi_cache[key]
-
     url = (
         "https://nominatim.openstreetmap.org/search?"
         f"q=industrial&format=json&limit=20&"
@@ -74,7 +50,6 @@ def find_closest_industrial_area(lat, lon, radius_km=50):
         return None
 
     if not resp:
-        waqi_cache[key] = None
         return None
 
     min_dist = float("inf")
@@ -85,20 +60,13 @@ def find_closest_industrial_area(lat, lon, radius_km=50):
         if dist < min_dist:
             min_dist = dist
 
-    min_dist = round(min_dist, 2)
-    waqi_cache[key] = min_dist
-    with open(CACHE_FILE, "w") as f:
-        json.dump(waqi_cache, f, indent=2)
+    return round(min_dist, 2)
 
-    return min_dist
 
 def fetch_city_data(city, country):
-    key = f"{city},{country}"
-    if key in waqi_cache:
-        return waqi_cache[key]
-
     url = f"https://api.waqi.info/feed/{city}/?token={WAQI_TOKEN}"
     print(f"Fetching: {city}, {country}")
+
     try:
         resp = requests.get(url).json()
     except:
@@ -109,10 +77,9 @@ def fetch_city_data(city, country):
 
     d = resp["data"]
     iaqi = d.get("iaqi", {})
-
     lat, lon = d.get("city", {}).get("geo", [None, None])
 
-    data = {
+    return {
         "City": city,
         "Country": country,
         "Latitude": lat,
@@ -126,24 +93,19 @@ def fetch_city_data(city, country):
         "CO": iaqi.get("co", {}).get("v"),
         "AQI": d.get("aqi"),
         "Air_Quality_Category": categorize_aqi(d.get("aqi")),
-        # "Population_Density": get_population_density(lat, lon),
-        # "Proximity_to_Industrial_Areas": find_closest_industrial_area(lat, lon),
         "Timestamp": datetime.now().isoformat()
     }
 
-    waqi_cache[key] = data
-    with open(CACHE_FILE, "w") as f:
-        json.dump(waqi_cache, f, indent=2)
-
-    return data
 
 # -----------------------------
 # MAIN FUNCTION
 # -----------------------------
 def fetch_all_latam_stations():
     all_rows = []
+
     for country in LATAM_COUNTRIES:
         search_url = f"https://api.waqi.info/search/?token={WAQI_TOKEN}&keyword={country}"
+
         try:
             resp = requests.get(search_url).json()
         except:
@@ -154,16 +116,25 @@ def fetch_all_latam_stations():
 
         for station in resp.get("data", []):
             city = station.get("station", {}).get("name")
+
             if city:
                 row = fetch_city_data(city, country)
                 if row:
                     all_rows.append(row)
-                time.sleep(1)  # avoid API rate limit
+
+                time.sleep(1)  # avoid rate limit
 
     df = pd.DataFrame(all_rows)
-    df.to_csv("latam_air_quality_real.csv", index=False)
-    print("Saved: latam_air_quality_real.csv")
+
+    # Save file with today's date
+    today = datetime.now().strftime("%Y-%m-%d")
+    filename = f"{OUTPUT_DIR}/latam_air_quality_{today}.csv"
+
+    df.to_csv(filename, index=False)
+    print(f"Saved: {filename}")
+
     return df
+
 
 # -----------------------------
 # RUN
