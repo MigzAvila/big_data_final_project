@@ -8,6 +8,7 @@ on:
 jobs:
   run-script:
     runs-on: ubuntu-latest
+    environment: Secrets
 
     permissions:
       contents: write   # allow pushing changes
@@ -27,7 +28,7 @@ jobs:
 
       - name: Run the Python script
         env:
-          WAQI_TOKEN: ${{ env.Secrets.WAQI_TOKEN }}
+          WAQI_TOKEN: ${{ secrets.WAQI_TOKEN }}
         run: python scripts/fetch_data.py
 
       - name: Commit and push changes
